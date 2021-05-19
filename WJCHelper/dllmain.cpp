@@ -1,11 +1,11 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
 #include "pch.h"
 #include <stdio.h>
-
-#ifdef __cplusplus    // If used by C++ code, 
-extern "C" {          // we need to export the C interface
-#endif
 #include <tchar.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
@@ -22,6 +22,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
 static HHOOK MyHook;
 
+// Writes data into the mailslot for the main process to read
+// Given an hWnd, this will gather the various bits of info about the process and window before writing to the mailbox.
 void __stdcall WriteInfo(WPARAM wParam)
 {
     HANDLE FileHandle;
@@ -42,10 +44,12 @@ void __stdcall WriteInfo(WPARAM wParam)
     DWORD Len = 100;
     QueryFullProcessImageNameW(OpenProcess(PROCESS_QUERY_INFORMATION, false, ProcessID), 0, ProcessName, &Len);
 
+    BOOL WindowIsVisible = IsWindowVisible((HWND)wParam);
+
     DWORD BytesWritten = 0;
     TCHAR Message[400]{};
     Message[0] = '\0';
-    _stprintf_s(Message, 400, L"hWnd 0x%08X, PID %d, Title \"%s\", Process \"%s\"", wParam, ProcessID, WindowTitle, ProcessName);
+    _stprintf_s(Message, 400, L"hWnd 0x%08X, %s, PID %d, Title \"%s\", Process \"%s\"", wParam, (WindowIsVisible ? L"VIS" : L"INV"), ProcessID, WindowTitle, ProcessName);
 
     BOOL WriteResult = WriteFile(FileHandle, Message, (DWORD)(lstrlen(Message) + 1) * sizeof(TCHAR), &BytesWritten, (LPOVERLAPPED)NULL);
     if (!WriteResult)
@@ -55,18 +59,15 @@ void __stdcall WriteInfo(WPARAM wParam)
     }
 }
 
+// Called inside the process where a window is closing right before it closes
 LRESULT CALLBACK CBTCall(int nCode, WPARAM wParam, LPARAM lParam)
 {
-    if (nCode == HCBT_DESTROYWND)
-    {
-        // wParam is the window handle about to be destroyed
-        WriteInfo(wParam);
-    }
-
-    return CallNextHookEx(MyHook, nCode, wParam, lParam);
+    // wParam is the window handle about to be destroyed
+    if (nCode == HCBT_DESTROYWND) { WriteInfo(wParam); }
+    return CallNextHookEx(MyHook, nCode, wParam, lParam); // We need to do this so events will get forwarded on.
 }
 
-// Call this second. Creates the hook to call back into the EXE on the desired events
+// Call this first. Creates the hook to ask the system to tell us about window close events
 __declspec(dllexport) HRESULT SetupHook(HINSTANCE dllInstance)
 {
     MyHook = SetWindowsHookExA(WH_CBT, CBTCall, dllInstance, 0);
@@ -74,7 +75,7 @@ __declspec(dllexport) HRESULT SetupHook(HINSTANCE dllInstance)
     return S_OK;
 }
 
-// Call this when closing, stops the hook.
+// Call this when closing, stops the hook. May cause problems if not cleaned up properly.
 __declspec(dllexport) void CleanupHook()
 {
     if (MyHook != NULL) { UnhookWindowsHookEx(MyHook); }

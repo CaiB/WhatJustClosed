@@ -4,13 +4,14 @@
 #include <tchar.h>
 #include <strsafe.h>
 
-HINSTANCE HelperDLLHandle;
-HANDLE ReceiverHandle;
+HINSTANCE HelperDLLHandle; // Our DLL instance, used to hook & unkook events
+HANDLE ReceiverHandle; // The mailslot for receiving event data from other processes
 
 HRESULT(*DLLSetupHook)(HINSTANCE);
 void(*DLLCleanupHook)();
 
-BOOL Continue = TRUE;
+BOOL Continue = TRUE; // Whether to continue running, or exit
+bool ShowInvisible = FALSE; // Whether to show entries for windows that closed while being invisible
 
 // Sets up the mailslot so data can be sent to it.
 void SetupReceiver()
@@ -24,6 +25,7 @@ void SetupReceiver()
 }
 
 // Checks the mailslot for data, and outputs it to the console if available.
+// Returns whether the operation successed (including if no data was available)
 BOOL DoReceive()
 {
     HANDLE EventHandle = CreateEvent(NULL, FALSE, FALSE, L"WJCMailslot");
@@ -45,7 +47,7 @@ BOOL DoReceive()
     if (MessageLength == MAILSLOT_NO_MESSAGE) { return TRUE; } // Nothing to read.
 
     DWORD MessageCountTotal = MessageCount;
-    TCHAR Contents[400];
+    TCHAR Contents[400]{};
     DWORD AmountRead = 0;
 
     while (MessageCount != 0)
@@ -65,7 +67,11 @@ BOOL DoReceive()
         SYSTEMTIME Time;
         GetLocalTime(&Time);
 
-        _tprintf(L"[%02d:%02d:%02d] Closed: %s\n", Time.wHour, Time.wMinute, Time.wSecond, MessageContent);
+        if (MessageContent[17] != L'I' || ShowInvisible)
+        {
+            _tprintf(L"[%02d:%02d:%02d] Closed: %s\n", Time.wHour, Time.wMinute, Time.wSecond, MessageContent);
+        }
+
         GlobalFree((HGLOBAL)MessageContent);
 
         BOOL InfoResult = GetMailslotInfo(ReceiverHandle, (LPDWORD)NULL, &MessageLength, &MessageCount, (LPDWORD)NULL);
@@ -80,6 +86,7 @@ BOOL DoReceive()
     return TRUE;
 }
 
+// Handles the console closing, and unhooks the event before exiting.
 BOOL WINAPI CtrlHandler(DWORD eventType)
 {
     printf("Exiting.\n");
@@ -96,9 +103,13 @@ BOOL WINAPI CtrlHandler(DWORD eventType)
     Continue = FALSE;
 }
 
-int main()
+// Run with any arguments to set "all output" mode, showing both visible and invisible windows at time of closing.
+// If no arguments are provided, then only windows that were visible will be output to the console.
+int main(int argc, char* argv)
 {
-    printf("CaiB's WhatJustClosed v0.1, 2021-05-18\n");
+    ShowInvisible = (argc > 1);
+    printf("CaiB's WhatJustClosed v0.2, 2021-05-18\n");
+    if (ShowInvisible) { printf("Running in all output mode\n"); }
     printf("Press Ctrl+C to stop & close.\n");
     SetConsoleCtrlHandler(CtrlHandler, TRUE);
 
@@ -130,7 +141,7 @@ int main()
         return HookCreateResult;
     }
 
-    // Wait, we are now running
+    // Receive and output data until we are closing.
     while (Continue)
     {
         BOOL RecRes = DoReceive();
