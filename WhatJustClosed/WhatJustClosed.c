@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
 
     if (Start32Bit) { Start32Child(); }
 
-    if (OnlyHook) { int _ = _getch(); }
+    if (OnlyHook) { (void)_getch(); }
     else
     {
         SetConsoleCtrlHandler(CtrlHandler, TRUE);
